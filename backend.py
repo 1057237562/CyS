@@ -195,7 +195,7 @@ def send_message(tokenizer, messages, model, temp, top_p, previous=""):
 def function_call(json):
     return requests.post("http://127.0.0.1:12701/function_call", json=json).text
 
-t1 = threading.Thread(target=app.run, kwargs={"port": 8501})
+t1 = threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
 t1.start()
 print("Server started on port 8501")
 while True:
