@@ -27,47 +27,18 @@ debug = False
 
 model_ref = "CyberStew/qwen"
 
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_python",
-            "description": "Execute a snippet of Python code and return the stdout. Can be used in doing test, validation, and do math computation tasks instead of reasoning. You don't need to check the code correctness and efficiency before executing it.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "The Python code to be executed. The string will only be escaped once."
-                    },
-                    "input": {
-                        "type": "string",
-                        "description": "The input to be redirected to stdin."
-                    }
-                },
-                "required": ["code"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "pip_list",
-            "description": "List all library that is installed in current python environment. You can check the installed libraries if u are not sure.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    }
-]
+def fetch_tools():
+    try:
+        response = requests.get("http://127.0.0.1:12701/fetch")
+        if response.status_code == 200:
+            return response.json().get("tools", [])
+        else:
+            print(f"Failed to fetch tools: {response.status_code}")
+            return []
+    except requests.RequestException as e:
+        print(f"Error fetching tools: {e}")
+        return []
 
-@app.route('/query_tools', methods=['GET'])
-def get_tools():
-    return tools
-
-        
 def load_model(ref):
     return load(ref, {"trust_remote_code": True})
 
@@ -82,7 +53,7 @@ chat_template = tokenizer.chat_template or (
     )
 
 supports_system_role = "system role not supported" not in chat_template.lower()
-system_prompt = "You are a helpful AI assistant trained on a vast amount of human knowledge. You may use tools provided wisely instead calculate by yourself."
+system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided wisely instead calculate by yourself."
 if supports_system_role:
     messages.append({"role": "system", "content": system_prompt})
 
@@ -149,8 +120,9 @@ def fetch_messages():
         else:
             time.sleep(0.1)
 
-def send_message(tokenizer, messages, model, temp, top_p, previous=""):
-    prompt = tokenizer.apply_chat_template(messages, tools=tools, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+def send_message(messages, temp, top_p, previous=""):
+    global debug, chat_template, tokenizer, model
+    prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     prompt = prompt.rstrip("\n")
     if debug:
         print(prompt)
@@ -184,7 +156,7 @@ def send_message(tokenizer, messages, model, temp, top_p, previous=""):
             messages.append({"role": "tool", "content": callback})
             yield "\n\n" + callback + "\n\n"
             prompt = tokenizer.apply_chat_template(messages,
-                                                        tools=tools,
+                                                        tools=fetch_tools(),
                                                         tokenize=False,
                                                         add_generation_prompt=True,
                                                         chat_template=chat_template)
@@ -195,6 +167,28 @@ def send_message(tokenizer, messages, model, temp, top_p, previous=""):
 def function_call(json):
     return requests.post("http://127.0.0.1:12701/function_call", json=json).text
 
+def require_thinking(msg):
+    global tokenizer, model, chat_template
+    system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You must only return True if it's difficult or False if it's simple based on the user's request. /nothink"
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
+    prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+    response = ""
+    for chunk in generate(tokenizer, prompt, model, 0.2, 0.5):
+        response = response + chunk
+
+        # begin neural-beagle-14 fixes
+        response = re.sub(r"^/\*+/", "", response)
+        response = re.sub(r"^:+", "", response)
+        # end neural-beagle-14 fixes
+        
+        response = response.replace('�', '')
+    answer = response
+    if "</think>" in answer:
+        answer = answer.split("</think>")[1]
+    print(answer.strip().strip('\n'))
+    return eval(answer.strip())
+    
+
 t1 = threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
 t1.start()
 print("Server started on port 8501")
@@ -202,7 +196,11 @@ while True:
     if message_queue.empty():
         responding = False
     msg = message_queue.get()
+    if not require_thinking(msg["content"]):
+        messages[0] = {"role": "system", "content": system_prompt + " /nothink"}
+    else:
+        messages[0] = {"role": "system", "content": system_prompt}
     messages.append({"role": msg["role"], "content": msg["content"]})
-    for chunk in send_message(tokenizer, messages, model, msg["temp"], msg["top_p"]):
+    for chunk in send_message(messages, msg["temp"], msg["top_p"]):
         response_buffer += chunk
     response_buffer = ""
