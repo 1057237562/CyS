@@ -62,7 +62,7 @@ messages.append({"role": "system", "content": system_prompt})
 def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, context_length=16384, stop_words=[]):
     text = ""
 
-    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p)),
+    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=20)),
                                 range(context_length)):
 
         if token == tokenizer.eos_token_id:
@@ -114,16 +114,26 @@ def run_chat():
 
 def fetch_messages():
     ptr=0
-    global response_buffer, responding
+    global response_buffer, responding, messages
+    message_ptr = len(messages)
     while responding: # Problemo
-        if len(response_buffer) > ptr:
+        if len(response_buffer) > ptr and message_ptr == len(messages):
             yield response_buffer[ptr]
             ptr += 1
-        else:
+        elif message_ptr == len(messages):
             time.sleep(0.1)
+        else:
+            if messages[message_ptr]["role"] != "user":
+                yield "\n<--new-message-->\n"
+            ptr = 0
+            message_ptr += 1
+            while message_ptr < len(messages):
+                yield "```\n" + messages[message_ptr]["content"] + "\n```"
+                yield "\n<--new-message-->\n"
+                message_ptr += 1
 
-def send_message(messages, temp, top_p, previous=""):
-    global debug, chat_template, tokenizer, model
+def send_message(messages, temp, top_p):
+    global debug, chat_template, tokenizer, model, response_buffer
     prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     prompt = prompt.rstrip("\n")
     if debug:
@@ -132,31 +142,28 @@ def send_message(messages, temp, top_p, previous=""):
     flag = True
     while flag:
         flag = False
-        response = previous
 
         for chunk in generate(tokenizer, prompt, model, temp, top_p):
-            response += chunk
+            response_buffer += chunk
 
-            if not previous:
-                # begin neural-beagle-14 fixes
-                response = re.sub(r"^/\*+/", "", response)
-                response = re.sub(r"^:+", "", response)
-                # end neural-beagle-14 fixes
+            # begin neural-beagle-14 fixes
+            # response_buffer = re.sub(r"^/\*+/", "", response_buffer)
+            # response_buffer = re.sub(r"^:+", "", response_buffer)
+            # end neural-beagle-14 fixes
 
-            response = response.replace('�', '')
-            # yield response + "▌"
-            yield chunk.replace('�', '')
+            response_buffer = response_buffer.replace('�', '')
 
-        # yield response
-        messages.append({"role": "assistant", "content": response})
-        answer = response
+        answer = response_buffer
+        messages.append({"role": "assistant", "content": response_buffer})
+        response_buffer = ""
         if "</think>" in answer:
             answer = answer.split("</think>")[1]
         if "<tool_call>" in answer and "</tool_call>" in answer:
             tool_call = answer.split('<tool_call>')[1].split('</tool_call>')[0]
-            callback = function_call(json.loads(tool_call))
+            sucess, callback = function_call(json.loads(tool_call))
+            if not sucess:
+                temp *= 0.7
             messages.append({"role": "tool", "content": callback})
-            yield "\n\n" + callback + "\n\n"
             prompt = tokenizer.apply_chat_template(messages,
                                                         tools=fetch_tools(),
                                                         tokenize=False,
@@ -167,7 +174,8 @@ def send_message(messages, temp, top_p, previous=""):
     
 
 def function_call(json):
-    return requests.post("http://127.0.0.1:12701/function_call", json=json).text
+    response = requests.post("http://127.0.0.1:12701/function_call", json=json).json()
+    return response.get("status", True), response.get("data", "")
 
 def require_thinking(msg):
     global tokenizer, model, chat_template
@@ -179,8 +187,8 @@ def require_thinking(msg):
         response += chunk
 
         # begin neural-beagle-14 fixes
-        response = re.sub(r"^/\*+/", "", response)
-        response = re.sub(r"^:+", "", response)
+        # response = re.sub(r"^/\*+/", "", response)
+        # response = re.sub(r"^:+", "", response)
         # end neural-beagle-14 fixes
         
         response = response.replace('�', '')
@@ -217,8 +225,8 @@ while True:
             while chunk is not None:
                 compress_result += chunk
                 # begin neural-beagle-14 fixes
-                compress_result = re.sub(r"^/\*+/", "", compress_result)
-                compress_result = re.sub(r"^:+", "", compress_result)
+                # compress_result = re.sub(r"^/\*+/", "", compress_result)
+                # compress_result = re.sub(r"^:+", "", compress_result)
                 # end neural-beagle-14 fixes
                 compress_result = compress_result.replace('�', '')
                 if responding:
@@ -234,6 +242,4 @@ while True:
     else:
         messages[0] = {"role": "system", "content": system_prompt}
     messages.append({"role": msg["role"], "content": msg["content"]})
-    for chunk in send_message(messages, msg["temp"], msg["top_p"]):
-        response_buffer += chunk
-    response_buffer = ""
+    send_message(messages, msg["temp"], msg["top_p"])

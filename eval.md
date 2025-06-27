@@ -83,3 +83,5 @@ After each query, the state is as follows:
 
 Thus, output $1,1,1,2,2,1,1$ separated by newlines.
 Solve this using Python
+
+帮我读取一下当前文件夹下templates/index.html的内容

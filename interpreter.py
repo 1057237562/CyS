@@ -26,7 +26,8 @@ tools = [{
                     }
                 },
                 "required": ["code"]
-            }
+            },
+            "example" : "{\"name\": \"execute_python\", \"arguments\": {\"code\": \"print('Hello World')\\n\", \"input\": \"\"}}"
         }
     },
     {
@@ -44,7 +45,7 @@ tools = [{
 ]
 
 @app.route('/function_call', methods=['POST'])
-def function_call():
+def execute_function():
     fc = json.loads(request.data)
     if fc["name"] == "execute_python":
         code = fc["arguments"]["code"]
@@ -58,11 +59,10 @@ def function_call():
         output = stdout.decode().strip()
         error = stderr.decode().strip() if stderr is not None else ""
         res = error + "\n" + output
-        return res if output != "" else "Code didn't write any data to stdout.\nTool call Error:" + error
+        return {"data": res if output != "" else "Code didn't write any data to stdout.\nTool call Error:" + error, "status": not error}
     if fc["name"] == "pip_list":
         with os.popen("pip list") as p:
-            return p.read()
-
+            return {"data": p.read(), "status": True}
 
 @app.route('/fetch', methods=['GET'])
 def fetch():
