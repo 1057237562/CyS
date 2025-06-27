@@ -173,7 +173,7 @@ def require_thinking(msg):
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
     prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     response = ""
-    for chunk in generate(tokenizer, prompt, model, 0.2, 0.5):
+    for chunk in generate(tokenizer, prompt, model, 0.2, 0.1):
         response = response + chunk
 
         # begin neural-beagle-14 fixes
