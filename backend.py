@@ -53,9 +53,11 @@ chat_template = tokenizer.chat_template or (
     )
 
 supports_system_role = "system role not supported" not in chat_template.lower()
+if not supports_system_role:
+    print("Error: The model does not support system role.")
+    exit(1)
 system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided wisely instead calculate by yourself."
-if supports_system_role:
-    messages.append({"role": "system", "content": system_prompt})
+messages.append({"role": "system", "content": system_prompt})
 
 def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, context_length=16384, stop_words=[]):
     text = ""
@@ -133,7 +135,7 @@ def send_message(messages, temp, top_p, previous=""):
         response = previous
 
         for chunk in generate(tokenizer, prompt, model, temp, top_p):
-            response = response + chunk
+            response += chunk
 
             if not previous:
                 # begin neural-beagle-14 fixes
@@ -174,7 +176,7 @@ def require_thinking(msg):
     prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     response = ""
     for chunk in generate(tokenizer, prompt, model, 0.2, 0.1):
-        response = response + chunk
+        response += chunk
 
         # begin neural-beagle-14 fixes
         response = re.sub(r"^/\*+/", "", response)
@@ -185,9 +187,19 @@ def require_thinking(msg):
     answer = response
     if "</think>" in answer:
         answer = answer.split("</think>")[1]
-    print(answer.strip().strip('\n'))
     return eval(answer.strip())
-    
+
+compressing = False
+compress_result = ""
+compress_gen = None
+ptr = 0
+
+def compress_context(messages):
+    global tokenizer, model, chat_template
+    system_prompt = "You are a secretary agent designed to conclude chat history between user and other agent. You will wisely rank the importance of each information and keep more important information if there is a lot of key informations. /nothink"
+    messages = [{"role": "system", "content": system_prompt}, *messages[1:], {"role": "user", "content": "Conclude the chat history in a concise way. The conclusion should be less than 2000 words and must not exceed 10 key information."}]
+    prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+    return generate(tokenizer, prompt, model, 0.4, 0.3)
 
 t1 = threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
 t1.start()
@@ -195,6 +207,27 @@ print("Server started on port 8501")
 while True:
     if message_queue.empty():
         responding = False
+        if not compressing and len(messages) > 9:
+            compressing = True
+            compress_gen = compress_context(messages.copy())
+            compress_result = ""
+            ptr = len(messages)
+        if compressing:
+            chunk = next(compress_gen, None)
+            while chunk is not None:
+                compress_result += chunk
+                # begin neural-beagle-14 fixes
+                compress_result = re.sub(r"^/\*+/", "", compress_result)
+                compress_result = re.sub(r"^:+", "", compress_result)
+                # end neural-beagle-14 fixes
+                compress_result = compress_result.replace('�', '')
+                if responding:
+                    break
+                chunk = next(compress_gen, None)
+            if not responding:
+                compressing = False
+                messages = [messages[0], {"role" : "agent", "content" : "Chat History\n\n" + compress_result},*messages[ptr:]]
+                # print("Compressing finished, result:", compress_result)
     msg = message_queue.get()
     if not require_thinking(msg["content"]):
         messages[0] = {"role": "system", "content": system_prompt + " /nothink"}
