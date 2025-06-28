@@ -14,13 +14,12 @@ import os
 import torch
 import json
 import requests
-import threading
+from threading import Thread
 
 app = Flask(__name__)
 
 from flask_cors import *
 CORS(app, supports_credentials=True)
-
 
 messages = []
 debug = False
@@ -56,7 +55,7 @@ supports_system_role = "system role not supported" not in chat_template.lower()
 if not supports_system_role:
     print("Error: The model does not support system role.")
     exit(1)
-system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided wisely instead calculate by yourself."
+system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself."
 messages.append({"role": "system", "content": system_prompt})
 
 def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, context_length=16384, stop_words=[]):
@@ -118,18 +117,22 @@ def fetch_messages():
     message_ptr = len(messages)
     while responding: # Problemo
         if len(response_buffer) > ptr and message_ptr == len(messages):
-            yield response_buffer[ptr]
-            ptr += 1
+            yield response_buffer[ptr:]
+            ptr = len(response_buffer)
         elif message_ptr == len(messages):
             time.sleep(0.1)
         else:
-            if messages[message_ptr]["role"] != "user":
+            if messages[message_ptr]["role"] == "tool":
+                yield "\n<--new-message-->\n"
+                yield "```\n" + messages[message_ptr]["content"] + "\n```"
                 yield "\n<--new-message-->\n"
             ptr = 0
             message_ptr += 1
             while message_ptr < len(messages):
-                yield "```\n" + messages[message_ptr]["content"] + "\n```"
-                yield "\n<--new-message-->\n"
+                if messages[message_ptr]["role"] == "tool":
+                    yield "\n<--new-message-->\n"
+                    yield "```\n" + messages[message_ptr]["content"] + "\n```"
+                    yield "\n<--new-message-->\n"
                 message_ptr += 1
 
 def send_message(messages, temp, top_p):
@@ -145,12 +148,10 @@ def send_message(messages, temp, top_p):
 
         for chunk in generate(tokenizer, prompt, model, temp, top_p):
             response_buffer += chunk
-
             # begin neural-beagle-14 fixes
-            # response_buffer = re.sub(r"^/\*+/", "", response_buffer)
-            # response_buffer = re.sub(r"^:+", "", response_buffer)
+            response_buffer = re.sub(r"^/\*+/", "", response_buffer)
+            response_buffer = re.sub(r"^:+", "", response_buffer)
             # end neural-beagle-14 fixes
-
             response_buffer = response_buffer.replace('�', '')
 
         answer = response_buffer
@@ -185,12 +186,10 @@ def require_thinking(msg):
     response = ""
     for chunk in generate(tokenizer, prompt, model, 0.2, 0.1):
         response += chunk
-
         # begin neural-beagle-14 fixes
-        # response = re.sub(r"^/\*+/", "", response)
-        # response = re.sub(r"^:+", "", response)
+        response = re.sub(r"^/\*+/", "", response)
+        response = re.sub(r"^:+", "", response)
         # end neural-beagle-14 fixes
-        
         response = response.replace('�', '')
     answer = response
     if "</think>" in answer:
@@ -209,7 +208,7 @@ def compress_context(messages):
     prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     return generate(tokenizer, prompt, model, 0.4, 0.3)
 
-t1 = threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
+t1 = Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
 t1.start()
 print("Server started on port 8501")
 while True:
@@ -225,8 +224,8 @@ while True:
             while chunk is not None:
                 compress_result += chunk
                 # begin neural-beagle-14 fixes
-                # compress_result = re.sub(r"^/\*+/", "", compress_result)
-                # compress_result = re.sub(r"^:+", "", compress_result)
+                compress_result = re.sub(r"^/\*+/", "", compress_result)
+                compress_result = re.sub(r"^:+", "", compress_result)
                 # end neural-beagle-14 fixes
                 compress_result = compress_result.replace('�', '')
                 if responding:
