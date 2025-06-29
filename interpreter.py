@@ -18,7 +18,7 @@ tools = [{
                 "properties": {
                     "code": {
                         "type": "string",
-                        "description": "The Python code to be executed. The string will only be escaped once."
+                        "description": "The Python code to be executed. The string will only be escaped once. Use \n instead of \\n to write a new line."
                     },
                     "input": {
                         "type": "string",
@@ -26,8 +26,7 @@ tools = [{
                     }
                 },
                 "required": ["code"]
-            },
-            "example" : "{\"name\": \"execute_python\", \"arguments\": {\"code\": \"print('Hello World')\\n\", \"input\": \"\"}}"
+            }
         }
     },
     {
@@ -52,14 +51,18 @@ def execute_function():
         input_data = fc["arguments"].get("input", "")
         with open("./snippet.py", "w+") as f:
             f.write(code)
-        process = subprocess.Popen(['python', './snippet.py'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        process.stdin.write(input_data.encode())
-        stdout, stderr = process.communicate()
-        process.stdin.close()
-        output = stdout.decode().strip()
-        error = stderr.decode().strip() if stderr is not None else ""
-        res = error + "\n" + output
-        return {"data": res if output != "" else "Code didn't write any data to stdout.\nTool call Error:" + error, "status": not error}
+        with subprocess.Popen(['python', './snippet.py'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+            try:
+                process.stdin.write(input_data.encode())
+                stdout, stderr = process.communicate(timeout=10)
+                process.stdin.close()
+                output = stdout.decode().strip()
+                error = stderr.decode().strip() if stderr is not None else ""
+                res = error + "\n" + output
+                return {"data": res if output != "" else "Code didn't write any data to stdout.\nTool call Error:" + error, "status": not error}
+            except subprocess.TimeoutExpired:
+                process.kill()
+                return {"data": "Code execution timed out.", "status": False}
     if fc["name"] == "pip_list":
         with os.popen("pip list") as p:
             return {"data": p.read(), "status": True}

@@ -61,7 +61,7 @@ messages.append({"role": "system", "content": system_prompt})
 def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, context_length=16384, stop_words=[]):
     text = ""
 
-    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=20)),
+    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p)),
                                 range(context_length)):
 
         if token == tokenizer.eos_token_id:
@@ -233,7 +233,7 @@ while True:
                 chunk = next(compress_gen, None)
             if not responding:
                 compressing = False
-                messages = [messages[0], {"role" : "agent", "content" : "Chat History\n\n" + compress_result},*messages[ptr:]]
+                messages = [messages[0], {"role" : "system", "content" : "Chat History\n\n" + compress_result},*messages[ptr:]]
                 # print("Compressing finished, result:", compress_result)
     msg = message_queue.get()
     if not require_thinking(msg["content"]):
