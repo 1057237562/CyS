@@ -164,6 +164,7 @@ def send_message(messages, temp, top_p):
             sucess, callback = function_call(json.loads(tool_call))
             if not sucess:
                 temp *= 0.7
+                messages[0] = {"role": "system", "content": system_prompt}
             messages.append({"role": "tool", "content": callback})
             prompt = tokenizer.apply_chat_template(messages,
                                                         tools=fetch_tools(),
@@ -201,10 +202,23 @@ compress_result = ""
 compress_gen = None
 ptr = 0
 
+memory_file = "./memory.stream"
+
 def compress_context(messages):
     global tokenizer, model, chat_template
     system_prompt = "You are a secretary agent designed to conclude chat history between user and other agent. You will wisely rank the importance of each information and keep more important information if there is a lot of key informations. /nothink"
     messages = [{"role": "system", "content": system_prompt}, *messages[1:], {"role": "user", "content": "Conclude the chat history in a concise way. The conclusion should be less than 2000 words and must not exceed 10 key information."}]
+    prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+    with open(memory_file, "a") as f:
+        for msg in messages:
+            if msg["role"] != "system":
+                f.write(json.dumps(msg) + "\n")
+    return generate(tokenizer, prompt, model, 0.4, 0.3)
+
+def extract_solution(messages):
+    global tokenizer, model, chat_template
+    system_prompt = "You are an AI Engineer who extract the correct solution and thinking process from the given chat history. You extract only the necessary part of the given thinking process required to reach the same solution and return it. /nothink"
+    messages = [{"role": "system", "content": system_prompt}, *messages[1:], {"role": "user", "content": "Extract the necessary thinking process from the above chat."}]
     prompt = tokenizer.apply_chat_template(messages, tools=[], tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     return generate(tokenizer, prompt, model, 0.4, 0.3)
 
