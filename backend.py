@@ -39,7 +39,7 @@ def fetch_tools():
 
 def load_model(ref):
     if os.path.exists("./checkpoints/adapters.safetensors"):
-        return load(ref, {"trust_remote_code": True}, adapter_path="./checkpoints/adapters.safetensors")
+        return load(ref, {"trust_remote_code": True}, adapter_path="./checkpoints/")
     return load(ref, {"trust_remote_code": True})
 
 model, tokenizer = load_model(model_ref)
@@ -180,7 +180,9 @@ def require_thinking(msg):
     system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You must only return True if it's difficult or False if it's simple based on the user's request. /nothink"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
-    return eval(skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1))))
+    juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1)))
+    juridiction = re.sub('[^a-zA-Z]', '', juridiction)
+    return juridiction != "False"
 
 compressing = False
 compress_result = ""

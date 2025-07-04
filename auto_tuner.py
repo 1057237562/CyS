@@ -11,7 +11,7 @@ def train_model(
     train_set,
     valid_set,
     seed: int = 0,
-    num_layers: int = 16,
+    num_layers: int = 24,
     fine_tune_type: str = "lora",
     lora_parameters: dict = {"rank": 32, "dropout": 0.0, "scale": 10.0},
     resume_adapter_file: str = None,
@@ -63,6 +63,7 @@ def train_model(
     adapter_path.mkdir(parents=True, exist_ok=True)
 
     adapter_file = adapter_path / "adapters.safetensors"
+    # save_config(vars(training_args), adapter_path / "adapter_config.json")
 
     # init training args
     training_args = TrainingArgs(
@@ -76,8 +77,6 @@ def train_model(
         max_seq_length=max_seq_length,
         grad_checkpoint=grad_checkpoint,
     )
-
-    save_config(vars(training_args), adapter_path / "adapter_config.json")
     
     # Initialize the selected optimizer
     lr = build_schedule(lr_schedule) if lr_schedule else learning_rate
@@ -129,18 +128,18 @@ def process_memory(model, tokenizer, chat_template, memory_file="./memory.jsonl"
         shutil.move(data_path + "/valid.jsonl", store_dir + "/valid.jsonl")
         shutil.move(data_path + "/test.jsonl", store_dir + "/test.jsonl")
     print("Making dataset from memory file")
+    shutil.copy(memory_file, data_path + "/train.jsonl")
     with open(memory_file, "r") as f:
         chats = [json.loads(line) for line in f.readlines()]
         with open(data_path + "/valid.jsonl", "a") as valid_file:
             for chat in chats:
                 valid_set = make_dataset(chat['messages'], model, tokenizer, chat_template)
-                shutil.copy(memory_file, data_path + "/train.jsonl")
                 for data in valid_set:
                     valid_file.write(json.dumps({"messages": data}, ensure_ascii=False) + "\n")
     print("Loading datasets")
     train_set, valid_set, test_set = load_local_dataset(Path("./data"), tokenizer, None)
 
-    train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1)
+    train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1, save_every=50, iters=200, max_seq_length=16384)
 
 if __name__ == "__main__":
     print("Loading pretrained model")
