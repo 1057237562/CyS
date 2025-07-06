@@ -13,7 +13,7 @@ def train_model(
     seed: int = 0,
     num_layers: int = 24,
     fine_tune_type: str = "lora",
-    lora_parameters: dict = {"rank": 32, "dropout": 0.0, "scale": 10.0},
+    lora_parameters: dict = {"rank": 32, "dropout": 0.05, "scale": 10.0},
     resume_adapter_file: str = None,
     adapter_path: str = "./checkpoints",
     batch_size: int = 4,
@@ -96,15 +96,14 @@ def train_model(
 def make_dataset(messages, model, tokenizer, chat_template, remake_size=3):
     vaild_set = [[] for _ in range(remake_size)]
     for msg in messages:
-        if msg['role'] != 'system':
-            if msg['role'] == 'user':
-                rephrased_msg = msg['content']
-                for i in range(remake_size):
-                    rephrased_msg = rephrase(rephrased_msg, model, tokenizer, chat_template)
-                    vaild_set[i].append({"role": "user", "content": rephrased_msg})
-            else:
-                for i in range(remake_size):
-                    vaild_set[i].append(msg)
+        if msg['role'] == 'user':
+            rephrased_msg = msg['content']
+            for i in range(remake_size):
+                rephrased_msg = rephrase(rephrased_msg, model, tokenizer, chat_template)
+                vaild_set[i].append({"role": "user", "content": rephrased_msg})
+        else:
+            for i in range(remake_size):
+                vaild_set[i].append(msg)
     return vaild_set
 
 def rephrase(msg, model, tokenizer, chat_template):
@@ -139,7 +138,7 @@ def process_memory(model, tokenizer, chat_template, memory_file="./memory.jsonl"
     print("Loading datasets")
     train_set, valid_set, test_set = load_local_dataset(Path("./data"), tokenizer, None)
 
-    train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1, save_every=50, iters=200, max_seq_length=16384)
+    train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1, save_every=50, iters=200, max_seq_length=16384, val_batches=1, steps_per_eval=50, grad_checkpoint=True)
 
 if __name__ == "__main__":
     print("Loading pretrained model")
@@ -158,4 +157,4 @@ if __name__ == "__main__":
     # print("Loading datasets")
     # train_set, valid_set, test_set = load_local_dataset(Path("./data"), tokenizer, None)
 
-    # train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=2)
+    # train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1, save_every=50, iters=200, max_seq_length=16384, val_batches=1, steps_per_eval=50, grad_checkpoint=True)

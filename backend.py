@@ -78,17 +78,22 @@ def fetch_stream():
     }
     return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
 
+def append_memory(messages, status):
+    system_prompt = "You will use tools provided multiple times wisely instead calculate by yourself. /nothink"
+    messages[0] = {"role": "system", "content": system_prompt}
+    with open(memory_file, "a", encoding='utf-8') as f:
+        f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if suc], "tools" : fetch_tools()}, ensure_ascii=False) + "\n")
+
 @app.route('/forget')
 def forget():
     global messages, status, responding, response_buffer, ptr
-    with open(memory_file, "a", encoding='utf-8') as f:
-        f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if msg["role"] != "system" and suc]}, ensure_ascii=False) + "\n")
+    append_memory(messages, status)
     messages = [{"role": "system", "content": system_prompt}]
     status = [True]
     ptr = 0
     responding = False
     response_buffer = ""
-    return {"status" : "sucess"}
+    return {"status" : "sucess"}    
 
 message_queue = queue.Queue(maxsize=5)
 response_buffer = ""
@@ -206,8 +211,7 @@ while True:
         responding = False
         if not compressing and len(messages) > 9:
             compressing = True
-            with open(memory_file, "a", encoding='utf-8') as f:
-                f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if msg["role"] != "system" and suc]}, ensure_ascii=False) + "\n")
+            append_memory(messages, status)
             compress_gen = compress_context(messages.copy())
             compress_result = ""
             ptr = len(messages)

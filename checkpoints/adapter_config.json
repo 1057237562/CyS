@@ -4,12 +4,12 @@
     "config": null,
     "data": "./data",
     "fine_tune_type": "lora",
-    "grad_checkpoint": false,
+    "grad_checkpoint": true,
     "iters": 1000,
     "learning_rate": 1e-05,
     "lora_parameters": {
         "rank": 32,
-        "dropout": 0.0,
+        "dropout": 0.05,
         "scale": 10.0
     },
     "lr_schedule": null,
