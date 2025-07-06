@@ -4,71 +4,42 @@ import queue
 
 from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
-import mlx.core as mx
 from mlx_lm.utils import load
-from mlx_lm.generate import generate_step
-from mlx_lm.sample_utils import make_sampler
-import argparse
+from commonutils import flush_generator, generate, skip_reason
 
 import os
 import torch
 import json
 import requests
-import threading
+from threading import Thread
+import datetime
 
 app = Flask(__name__)
 
 from flask_cors import *
 CORS(app, supports_credentials=True)
 
-
 messages = []
+status = []
 debug = False
 
 model_ref = "CyberStew/qwen"
 
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_python",
-            "description": "Execute a snippet of Python code and return the stdout. Can be used in doing test, validation, and do math computation tasks instead of reasoning. You don't need to check the code correctness and efficiency before executing it.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "The Python code to be executed. The string will only be escaped once."
-                    },
-                    "input": {
-                        "type": "string",
-                        "description": "The input to be redirected to stdin."
-                    }
-                },
-                "required": ["code"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "pip_list",
-            "description": "List all library that is installed in current python environment. You can check the installed libraries if u are not sure.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    }
-]
+def fetch_tools():
+    try:
+        response = requests.get("http://127.0.0.1:12701/fetch")
+        if response.status_code == 200:
+            return response.json().get("tools", [])
+        else:
+            print(f"Failed to fetch tools: {response.status_code}")
+            return []
+    except requests.RequestException as e:
+        print(f"Error fetching tools: {e}")
+        return []
 
-@app.route('/query_tools', methods=['GET'])
-def get_tools():
-    return tools
-
-        
 def load_model(ref):
+    if os.path.exists("./checkpoints/adapters.safetensors"):
+        return load(ref, {"trust_remote_code": True}, adapter_path="./checkpoints/")
     return load(ref, {"trust_remote_code": True})
 
 model, tokenizer = load_model(model_ref)
@@ -82,22 +53,12 @@ chat_template = tokenizer.chat_template or (
     )
 
 supports_system_role = "system role not supported" not in chat_template.lower()
-system_prompt = "You are a helpful AI assistant trained on a vast amount of human knowledge. You may use tools provided wisely instead calculate by yourself."
-if supports_system_role:
-    messages.append({"role": "system", "content": system_prompt})
-
-def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, context_length=16384, stop_words=[]):
-    text = ""
-
-    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p)),
-                                range(context_length)):
-
-        if token == tokenizer.eos_token_id:
-            break
-
-        delta = tokenizer.decode(token)
-        text += delta
-        yield delta
+if not supports_system_role:
+    print("Error: The model does not support system role.")
+    exit(1)
+system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself."
+messages.append({"role": "system", "content": system_prompt})
+status.append(True)
 
 @app.route('/')
 def index():
@@ -116,6 +77,23 @@ def fetch_stream():
         'X-Accel-Buffering': 'no',
     }
     return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
+
+def append_memory(messages, status):
+    system_prompt = "You will use tools provided multiple times wisely instead calculate by yourself. /nothink"
+    messages[0] = {"role": "system", "content": system_prompt}
+    with open(memory_file, "a", encoding='utf-8') as f:
+        f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if suc], "tools" : fetch_tools()}, ensure_ascii=False) + "\n")
+
+@app.route('/forget')
+def forget():
+    global messages, status, responding, response_buffer, ptr
+    append_memory(messages, status)
+    messages = [{"role": "system", "content": system_prompt}]
+    status = [True]
+    ptr = 0
+    responding = False
+    response_buffer = ""
+    return {"status" : "sucess"}    
 
 message_queue = queue.Queue(maxsize=5)
 response_buffer = ""
@@ -141,16 +119,30 @@ def run_chat():
 
 def fetch_messages():
     ptr=0
-    global response_buffer, responding
+    global response_buffer, responding, messages
+    message_ptr = len(messages)
     while responding: # Problemo
-        if len(response_buffer) > ptr:
-            yield response_buffer[ptr]
-            ptr += 1
-        else:
-            time.sleep(0.1)
+        if len(response_buffer) > ptr and message_ptr == len(messages):
+            yield response_buffer[ptr:]
+            ptr = len(response_buffer)
+        elif message_ptr < len(messages):
+            if messages[message_ptr]["role"] == "tool":
+                yield "\n<--new-message-->\n"
+                yield "```\n" + messages[message_ptr]["content"] + "\n```"
+                yield "\n<--new-message-->\n"
+            ptr = 0
+            message_ptr += 1
+            while message_ptr < len(messages):
+                if messages[message_ptr]["role"] == "tool":
+                    yield "\n<--new-message-->\n"
+                    yield "```\n" + messages[message_ptr]["content"] + "\n```"
+                    yield "\n<--new-message-->\n"
+                message_ptr += 1
+        time.sleep(0.1)
 
-def send_message(tokenizer, messages, model, temp, top_p, previous=""):
-    prompt = tokenizer.apply_chat_template(messages, tools=tools, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+def send_message(messages, temp, top_p):
+    global debug, chat_template, tokenizer, model, response_buffer
+    prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     prompt = prompt.rstrip("\n")
     if debug:
         print(prompt)
@@ -158,33 +150,25 @@ def send_message(tokenizer, messages, model, temp, top_p, previous=""):
     flag = True
     while flag:
         flag = False
-        response = previous
 
         for chunk in generate(tokenizer, prompt, model, temp, top_p):
-            response = response + chunk
+            response_buffer += chunk
+            response_buffer = response_buffer.replace('�', '')
 
-            if not previous:
-                # begin neural-beagle-14 fixes
-                response = re.sub(r"^/\*+/", "", response)
-                response = re.sub(r"^:+", "", response)
-                # end neural-beagle-14 fixes
-
-            response = response.replace('�', '')
-            # yield response + "▌"
-            yield chunk.replace('�', '')
-
-        # yield response
-        messages.append({"role": "assistant", "content": response})
-        answer = response
-        if "</think>" in answer:
-            answer = answer.split("</think>")[1]
+        answer = skip_reason(response_buffer)
+        messages.append({"role": "assistant", "content": response_buffer})
+        status.append(True)
+        response_buffer = ""
         if "<tool_call>" in answer and "</tool_call>" in answer:
             tool_call = answer.split('<tool_call>')[1].split('</tool_call>')[0]
-            callback = function_call(json.loads(tool_call))
+            sucess, callback = function_call(tool_call)
+            if not sucess:
+                messages[0] = {"role": "system", "content": system_prompt}
+                status[-1] = False
             messages.append({"role": "tool", "content": callback})
-            yield "\n\n" + callback + "\n\n"
+            status.append(sucess)
             prompt = tokenizer.apply_chat_template(messages,
-                                                        tools=tools,
+                                                        tools=fetch_tools(),
                                                         tokenize=False,
                                                         add_generation_prompt=True,
                                                         chat_template=chat_template)
@@ -193,16 +177,62 @@ def send_message(tokenizer, messages, model, temp, top_p, previous=""):
     
 
 def function_call(json):
-    return requests.post("http://127.0.0.1:12701/function_call", json=json).text
+    response = requests.post("http://127.0.0.1:12701/function_call", data=json).json()
+    return response.get("status", True), response.get("data", "")
 
-t1 = threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
+def require_thinking(msg):
+    global tokenizer, model, chat_template
+    system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You must only return True if it's difficult or False if it's simple based on the user's request. /nothink"
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+    juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1)))
+    juridiction = re.sub('[^a-zA-Z]', '', juridiction)
+    return juridiction != "False"
+
+compressing = False
+compress_result = ""
+compress_gen = None
+ptr = 0
+
+memory_file = "./memory.jsonl"
+
+def compress_context(messages):
+    global tokenizer, model, chat_template
+    system_prompt = "You are a secretary agent designed to conclude chat history between user and other agent. You will wisely rank the importance of each information and keep more important information if there is a lot of key informations. /nothink"
+    messages = [{"role": "system", "content": system_prompt}, *messages[1:], {"role": "user", "content": "Conclude the chat history in a concise way. The conclusion should be less than 2000 words and must not exceed 10 key information."}]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+    return generate(tokenizer, prompt, model, 0.4, 0.3)
+
+t1 = Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
 t1.start()
 print("Server started on port 8501")
 while True:
     if message_queue.empty():
         responding = False
+        if not compressing and len(messages) > 9:
+            compressing = True
+            append_memory(messages, status)
+            compress_gen = compress_context(messages.copy())
+            compress_result = ""
+            ptr = len(messages)
+        if compressing:
+            chunk = next(compress_gen, None)
+            while chunk is not None:
+                compress_result += chunk
+                compress_result = compress_result.replace('�', '')
+                if responding:
+                    break
+                chunk = next(compress_gen, None)
+            if not responding:
+                compressing = False
+                messages = [messages[0], {"role" : "system", "content" : "Chat History\n\n" + compress_result}, *messages[ptr:]]
+                status = [True, True, *status[ptr:]]
+                # print("Compressing finished, result:", compress_result)
     msg = message_queue.get()
+    if not require_thinking(msg["content"]):
+        messages[0] = {"role": "system", "content": system_prompt + " /nothink"}
+    else:
+        messages[0] = {"role": "system", "content": system_prompt}
     messages.append({"role": msg["role"], "content": msg["content"]})
-    for chunk in send_message(tokenizer, messages, model, msg["temp"], msg["top_p"]):
-        response_buffer += chunk
-    response_buffer = ""
+    status.append(True)
+    send_message(messages, msg["temp"], msg["top_p"])
