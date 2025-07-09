@@ -16,7 +16,7 @@
     "mask_prompt": false,
     "max_seq_length": 16384,
     "model": "CyberStew/qwen",
-    "num_layers": 24,
+    "num_layers": 36,
     "optimizer": "adam",
     "optimizer_config": {
         "adam": {},

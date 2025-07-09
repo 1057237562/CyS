@@ -5,6 +5,7 @@ import queue
 from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
 from mlx_lm.utils import load
+from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
 from commonutils import flush_generator, generate, skip_reason
 
 import os
@@ -95,6 +96,13 @@ def forget():
     response_buffer = ""
     return {"status" : "sucess"}    
 
+@app.route("/halt")
+def halt():
+    global responding, message_queue
+    responding = False
+    message_queue = queue.Queue(maxsize=5)
+    return {"status": "success"}
+
 message_queue = queue.Queue(maxsize=5)
 response_buffer = ""
 responding = False
@@ -182,10 +190,12 @@ def function_call(json):
 
 def require_thinking(msg):
     global tokenizer, model, chat_template
-    system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You must only return True if it's difficult or False if it's simple based on the user's request. /nothink"
+    system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You should return True if it's difficult or False if it's simple based on the user's request. You must only return one of True/False. /nothink"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+    remove_lora_layers(model)
     juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1)))
+    load_adapters(model, "./checkpoints/")
     juridiction = re.sub('[^a-zA-Z]', '', juridiction)
     return juridiction != "False"
 
@@ -201,7 +211,7 @@ def compress_context(messages):
     system_prompt = "You are a secretary agent designed to conclude chat history between user and other agent. You will wisely rank the importance of each information and keep more important information if there is a lot of key informations. /nothink"
     messages = [{"role": "system", "content": system_prompt}, *messages[1:], {"role": "user", "content": "Conclude the chat history in a concise way. The conclusion should be less than 2000 words and must not exceed 10 key information."}]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
-    return generate(tokenizer, prompt, model, 0.4, 0.3)
+    return generate(tokenizer, prompt, model, 0.2, 0.3)
 
 t1 = Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
 t1.start()

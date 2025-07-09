@@ -11,7 +11,7 @@ def train_model(
     train_set,
     valid_set,
     seed: int = 0,
-    num_layers: int = 24,
+    num_layers: int = 36,
     fine_tune_type: str = "lora",
     lora_parameters: dict = {"rank": 32, "dropout": 0.05, "scale": 10.0},
     resume_adapter_file: str = None,
@@ -123,9 +123,18 @@ def process_memory(model, tokenizer, chat_template, memory_file="./memory.jsonl"
     if not os.path.exists(store_dir):
         os.mkdir(store_dir)
         # Move train.jsonl , valid.jsonl, test.jsonl to backup folder
-        shutil.move(data_path + "/train.jsonl", store_dir + "/train.jsonl")
-        shutil.move(data_path + "/valid.jsonl", store_dir + "/valid.jsonl")
-        shutil.move(data_path + "/test.jsonl", store_dir + "/test.jsonl")
+        if os.path.exists(data_path + "/train.jsonl"):
+            shutil.move(data_path + "/train.jsonl", store_dir + "/train.jsonl")
+        if os.path.exists(data_path + "/valid.jsonl"):
+            shutil.move(data_path + "/valid.jsonl", store_dir + "/valid.jsonl")
+        if os.path.exists(data_path + "/test.jsonl"):
+            shutil.move(data_path + "/test.jsonl", store_dir + "/test.jsonl")
+    if os.path.exists(data_path + "/train.jsonl"):
+        os.remove(data_path + "/train.jsonl")
+    if os.path.exists(data_path + "/valid.jsonl"):
+        os.remove(data_path + "/valid.jsonl")
+    if os.path.exists(data_path + "/test.jsonl"):
+        os.remove(data_path + "/test.jsonl")
     print("Making dataset from memory file")
     shutil.copy(memory_file, data_path + "/train.jsonl")
     with open(memory_file, "r") as f:
@@ -153,8 +162,8 @@ if __name__ == "__main__":
         "{% endif %}"
     )
     
-    process_memory(model, tokenizer, chat_template)
-    # print("Loading datasets")
-    # train_set, valid_set, test_set = load_local_dataset(Path("./data"), tokenizer, None)
+    # process_memory(model, tokenizer, chat_template)
+    print("Loading datasets")
+    train_set, valid_set, test_set = load_local_dataset(Path("./data"), tokenizer, None)
 
-    # train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1, save_every=50, iters=200, max_seq_length=16384, val_batches=1, steps_per_eval=50, grad_checkpoint=True)
+    train_model(model=model, train_set=train_set, valid_set=valid_set, batch_size=1, save_every=50, iters=200, max_seq_length=16384, val_batches=1, steps_per_eval=50, grad_checkpoint=True)

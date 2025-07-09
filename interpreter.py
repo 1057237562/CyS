@@ -1,6 +1,7 @@
 import subprocess
 import os
 from flask import Flask, request
+import traceback
 import json
 
 app = Flask(__name__)
@@ -67,8 +68,8 @@ def execute_function():
         if fc["name"] == "pip_list":
             with os.popen("pip list") as p:
                 return {"data": p.read(), "status": True}
-    except Exception:
-        return {"data": "Invalid Tool call JSON format.", "status": False}
+    except Exception as e:
+        return {"data": traceback.format_exc(), "status": False}
 
 @app.route('/fetch', methods=['GET'])
 def fetch():
