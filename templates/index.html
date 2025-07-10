@@ -12,6 +12,12 @@
             --primary-hover: #45a049;
             --user-message-bg: #e3f2fd;
             --bot-message-bg: #ffffff;
+            --stop-color: #f44336;
+            --stop-hover: #d32f2f;
+            --forget-color: #ff9800;
+            --forget-hover: #f57c00;
+            --retry-color: #2196F3;
+            --retry-hover: #0b7dda;
             --think-bg: #f8f9fa;
             --shadow-color: rgba(0, 0, 0, 0.1);
             --border-color: #ddd;
@@ -51,6 +57,51 @@
             margin: 0;
             font-size: 1.5rem;
             font-weight: 500;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .header-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .stop-btn {
+            background-color: var(--stop-color);
+            color: white;
+        }
+        
+        .stop-btn:hover {
+            background-color: var(--stop-hover);
+        }
+        
+        .forget-btn {
+            background-color: var(--forget-color);
+            color: white;
+        }
+        
+        .forget-btn:hover {
+            background-color: var(--forget-hover);
+        }
+
+        .retry-btn {
+            background-color: var(--retry-color);
+            color: white;
+        }
+        
+        .retry-btn:hover {
+            background-color: var(--retry-hover);
         }
         
         .toggle-input-btn {
@@ -350,12 +401,53 @@
                 max-width: 90%;
                 padding: 10px 12px;
             }
+
+            .header {
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 1.3rem;
+            }
+            
+            .header-buttons {
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            .header-btn {
+                flex: 1;
+                justify-content: center;
+            }
         }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>CyS Project</h1>
+        <div class="header-buttons">
+            <button class="header-btn stop-btn" id="stopBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="6" y="6" width="12" height="12" rx="1" ry="1"></rect>
+                </svg>
+                停止
+            </button>
+            <button class="header-btn retry-btn" id="retryBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/>
+                </svg>
+                重试
+            </button>
+            <button class="header-btn forget-btn" id="forgetBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 3l18 18"></path>
+                    <path d="M19 12a7 7 0 01-7 7m4-16a7 7 0 00-7 7"></path>
+                </svg>
+                清屏
+            </button>
+        </div>
     </div>
     
     <div class="chat-container" id="chatContainer">
@@ -452,6 +544,35 @@
                 });
             });
         }
+
+        document.getElementById('stopBtn').addEventListener('click', async function() {
+            try {
+                const response = await fetch('/halt', {
+                    method: 'GET'
+                });
+                
+                const result = await response.json();
+            } catch (error) {
+                console.error('停止请求失败:', error);
+            }
+        });
+        
+        document.getElementById('forgetBtn').addEventListener('click', async function() {
+            if (confirm('确定要清空当前聊天记录并重置对话吗？')) {
+                try {
+                    const response = await fetch('/forget', {
+                        method: 'GET'
+                    });
+                    
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        document.getElementById('chatContainer').innerHTML = '';
+                    }
+                } catch (error) {
+                    console.error('重置对话失败:', error);
+                }
+            }
+        });
 
         fetch('./fetch').then(response => {
             if (!response.ok) {
@@ -566,6 +687,98 @@
         }).catch(error => {
             console.error('Error fetching initial data:', error);
         });
+
+        document.getElementById('retryBtn').addEventListener('click', async function() {
+            const message = document.getElementById('message').value.trim();
+            const temperature = parseFloat(document.getElementById('temperature').value);
+            const top_p = parseFloat(document.getElementById('top_p').value);
+            
+            // 添加用户消息到聊天界面
+            const chatContainer = document.getElementById('chatContainer');
+            const messages = chatContainer.querySelectorAll('.message');
+            if (messages.length > 0 && messages[messages.length-1].classList.contains('bot-message')) {
+                chatContainer.removeChild(messages[messages.length-1]);
+            }
+            
+            // 添加机器人消息占位符
+            const botMessageDiv = document.createElement('div');
+            botMessageDiv.className = 'message bot-message';
+            let responseDiv = document.createElement('div');
+            responseDiv.className = 'markdown-content';
+            responseDiv.innerHTML = '<em>思考中...</em>';
+            botMessageDiv.appendChild(responseDiv);
+            chatContainer.appendChild(botMessageDiv);
+            
+            // 滚动到底部
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            try {
+                const response = await fetch('./retry', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        temp: temperature,
+                        top_p: top_p
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                // 处理流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let accumulatedText = '';
+                responseDiv.innerHTML = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    let chunk = decoder.decode(value, { stream: true });
+                    // chunk 包含<new-message>标签
+                    while (chunk.includes(splitter)) {
+                        // 提取<new-message>标签中的内容
+                        accumulatedText += chunk.slice(0, chunk.indexOf(splitter));
+                        chunk = chunk.slice(chunk.indexOf(splitter) + splitter.length);
+                        responseDiv.innerHTML = processContent(accumulatedText);
+                        setupThinkContainers(responseDiv);
+                        accumulatedText = '';
+
+                        const newMessageDiv = document.createElement('div');
+                        newMessageDiv.className = 'message bot-message';
+                        responseDiv = document.createElement('div');
+                        responseDiv.className = 'markdown-content';
+                        responseDiv.innerHTML = '<em>获取中...</em>';
+                        newMessageDiv.appendChild(responseDiv);
+                        chatContainer.appendChild(newMessageDiv);
+                    }
+                    accumulatedText += chunk;
+                    
+                    // 处理内容并渲染Markdown
+                    const processedContent = processContent(accumulatedText);
+                    responseDiv.innerHTML = processedContent;
+                    
+                    // 设置think容器的事件
+                    setupThinkContainers(responseDiv);
+                    
+                    // 自动滚动到底部
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+            } catch (error) {
+                const errorDiv = document.createElement('div');
+                errorDiv.style.color = 'red';
+                errorDiv.textContent = `错误: ${error.message}`;
+                responseDiv.appendChild(errorDiv);
+                console.error('Error:', error);
+            } finally {
+                document.getElementById('message').value = '';
+                document.getElementById('message').focus();
+            }
+        });
         
         document.getElementById('sendButton').addEventListener('click', async function() {
             const message = document.getElementById('message').value.trim();
@@ -664,14 +877,6 @@
                 document.getElementById('message').value = '';
                 // 重新聚焦到输入框
                 document.getElementById('message').focus();
-            }
-        });
-        
-        // 允许按Enter发送消息（Shift+Enter换行）
-        document.getElementById('message').addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                document.getElementById('sendButton').click();
             }
         });
         

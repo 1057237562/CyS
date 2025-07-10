@@ -93,12 +93,48 @@ def forget():
     status = [True]
     ptr = 0
     responding = False
-    response_buffer = ""
-    return {"status" : "sucess"}    
+    return {"status" : "success"}
+
+@app.route("/retry", methods=['POST'])
+def retry():
+    body = json.loads(request.data)
+    temp = body['temp']
+    top_p = body['top_p']
+    global responding, messages, message_queue, status, response_buffer
+    if not responding:
+        messages.pop()
+        status.pop()
+        responding = True
+        last_message = messages[-1]
+        messages.pop()
+        status.pop()
+        message_queue.put({"role": last_message["role"], "content": last_message["content"], "temp": temp, "top_p": top_p})
+        headers = {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        }
+        return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
+    else:
+        responding = False
+        last_message = messages[-1]
+        messages.pop()
+        status.pop()
+        message_queue.put({"role": last_message["role"], "content": last_message["content"], "temp": temp, "top_p": top_p})
+        headers = {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        }
+        while not responding: # Wait for the responding signal
+            time.sleep(0.1)
+        return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
+        
+        
 
 @app.route("/halt")
 def halt():
-    global responding, message_queue
+    global responding, message_queue, response_buffer
     responding = False
     message_queue = queue.Queue(maxsize=5)
     return {"status": "success"}
@@ -162,6 +198,8 @@ def send_message(messages, temp, top_p):
         for chunk in generate(tokenizer, prompt, model, temp, top_p):
             response_buffer += chunk
             response_buffer = response_buffer.replace('�', '')
+            if not responding:
+                return
 
         answer = skip_reason(response_buffer)
         messages.append({"role": "assistant", "content": response_buffer})
@@ -197,7 +235,7 @@ def require_thinking(msg):
     juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1)))
     load_adapters(model, "./checkpoints/")
     juridiction = re.sub('[^a-zA-Z]', '', juridiction)
-    return juridiction != "False"
+    return eval(juridiction)
 
 compressing = False
 compress_result = ""
@@ -213,7 +251,7 @@ def compress_context(messages):
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     return generate(tokenizer, prompt, model, 0.2, 0.3)
 
-t1 = Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 8501})
+t1 = Thread(target=app.run, kwargs={"host": "::", "port": 8501})
 t1.start()
 print("Server started on port 8501")
 while True:
@@ -245,4 +283,6 @@ while True:
         messages[0] = {"role": "system", "content": system_prompt}
     messages.append({"role": msg["role"], "content": msg["content"]})
     status.append(True)
+    responding = True
+    response_buffer = ""
     send_message(messages, msg["temp"], msg["top_p"])

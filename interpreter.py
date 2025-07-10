@@ -19,7 +19,7 @@ tools = [{
                 "properties": {
                     "code": {
                         "type": "string",
-                        "description": "The Python code to be executed. The string will only be escaped once. Use \n instead of \\n to write a new line."
+                        "description": "The Python code to be executed. The string will only be escaped once."
                     },
                     "input": {
                         "type": "string",
@@ -68,7 +68,8 @@ def execute_function():
         if fc["name"] == "pip_list":
             with os.popen("pip list") as p:
                 return {"data": p.read(), "status": True}
-    except Exception as e:
+    except Exception:
+        print(request.data)
         return {"data": traceback.format_exc(), "status": False}
 
 @app.route('/fetch', methods=['GET'])

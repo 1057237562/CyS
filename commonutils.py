@@ -5,7 +5,7 @@ from mlx_lm.sample_utils import make_sampler, make_repetition_penalty
 def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, top_k=20, context_length=16384, stop_words=[]):
     text = ""
 
-    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=top_k), logits_processors=[make_repetition_penalty(1.1, 20)]),
+    for (token, prob), n in zip(generate_step(mx.array(tokenizer.encode(prompt)), model, max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=top_k), logits_processors=[make_repetition_penalty(1.1, 60)]),
                                 range(context_length)):
 
         if token == tokenizer.eos_token_id:
