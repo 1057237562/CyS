@@ -47,7 +47,7 @@ tools = [{
 @app.route('/function_call', methods=['POST'])
 def execute_function():
     try:
-        fc = json.loads(request.data)
+        fc = json.loads(request.data.decode())
         if fc["name"] == "execute_python":
             code = fc["arguments"]["code"]
             input_data = fc["arguments"].get("input", "")

@@ -102,9 +102,10 @@ def retry():
     top_p = body['top_p']
     global responding, messages, message_queue, status, response_buffer
     if not responding:
+        if len(messages) < 3:
+            return {"status": "error", "message": "No messages to retry."}
         messages.pop()
         status.pop()
-        responding = True
         last_message = messages[-1]
         messages.pop()
         status.pop()
@@ -114,6 +115,8 @@ def retry():
             'Cache-Control': 'no-cache',
             'X-Accel-Buffering': 'no',
         }
+        while not responding: # Wait for the responding signal
+            time.sleep(0.1)
         return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
     else:
         responding = False
@@ -223,7 +226,7 @@ def send_message(messages, temp, top_p):
     
 
 def function_call(json):
-    response = requests.post("http://127.0.0.1:12701/function_call", data=json).json()
+    response = requests.post("http://127.0.0.1:12701/function_call", data=json.encode()).json()
     return response.get("status", True), response.get("data", "")
 
 def require_thinking(msg):
@@ -233,7 +236,8 @@ def require_thinking(msg):
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     remove_lora_layers(model)
     juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1)))
-    load_adapters(model, "./checkpoints/")
+    if os.path.exists("./checkpoints/adapters.safetensors"):
+        load_adapters(model, "./checkpoints/")
     juridiction = re.sub('[^a-zA-Z]', '', juridiction)
     return eval(juridiction)
 
