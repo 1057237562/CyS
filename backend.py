@@ -4,9 +4,10 @@ import queue
 
 from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
-from mlx_lm.utils import load
+from customutils import load
 from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
-from commonutils import flush_generator, generate, skip_reason
+from commonutils import cache_generate, flush_generator, generate, skip_reason
+from mlx_lm.models.cache import make_prompt_cache
 
 import os
 import torch
@@ -44,6 +45,7 @@ def load_model(ref):
     return load(ref, {"trust_remote_code": True})
 
 model, tokenizer = load_model(model_ref)
+cache = make_prompt_cache(model)
 chat_template = tokenizer.chat_template or (
         "{% for message in messages %}"
         "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
@@ -188,7 +190,7 @@ def fetch_messages():
         time.sleep(0.1)
 
 def send_message(messages, temp, top_p):
-    global debug, chat_template, tokenizer, model, response_buffer
+    global debug, chat_template, tokenizer, model, response_buffer, cache
     prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     prompt = prompt.rstrip("\n")
     if debug:
@@ -197,13 +199,11 @@ def send_message(messages, temp, top_p):
     flag = True
     while flag:
         flag = False
-
-        for chunk in generate(tokenizer, prompt, model, temp, top_p):
+        for chunk in cache_generate(tokenizer, prompt, model, cache, temp, top_p):
             response_buffer += chunk
             response_buffer = response_buffer.replace('�', '')
             if not responding:
                 return
-
         answer = skip_reason(response_buffer)
         messages.append({"role": "assistant", "content": response_buffer})
         status.append(True)
@@ -230,12 +230,14 @@ def function_call(json):
     return response.get("status", True), response.get("data", "")
 
 def require_thinking(msg):
+    if "/think" in msg:
+        return True
     global tokenizer, model, chat_template
     system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You should return True if it's difficult or False if it's simple based on the user's request. You must only return one of True/False. /nothink"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     remove_lora_layers(model)
-    juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1)))
+    juridiction = skip_reason(flush_generator(generate(tokenizer, prompt, model, 0.2, 0.1), 20))
     if os.path.exists("./checkpoints/adapters.safetensors"):
         load_adapters(model, "./checkpoints/")
     juridiction = re.sub('[^a-zA-Z]', '', juridiction)
