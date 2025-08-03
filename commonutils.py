@@ -45,6 +45,28 @@ def pop_kvcache(cache, ranges: list[tuple]): # Cache shape (1,8,x,128)
         c.state = (pop(k), pop(v))
         c.keys, c.values = c.state
         c.offset -= length
+        
+def pop_kvcache(cache, index: int): # Cache shape (1,8,x,128)
+    state = []
+    for c in cache:
+        k, v = c.state
+        def pop(s):
+            seg = []
+            seg.append(s[:,:,:index,:])
+            seg.append(s[:,:,index + 1:,:])
+            return mx.concat(seg, axis=2)
+        state.append((k[:,:,:index,:], v[:,:,:index,:]))
+        c.state = (pop(k), pop(v))
+        c.keys, c.values = c.state
+        c.offset -= 1
+    return state
+        
+def insert_kvcache(cache, index: int, state: list[tuple]):
+    for c, (k, v) in zip(cache, state):
+        key, value = c.state
+        c.state = (mx.concat([key[:,:,:index,:], k, key[:,:,index:,:]], axis=2), mx.concat([value[:,:,:index,:], v, value[:,:,:index,:]], axis=2))
+        c.keys, c.values = c.state
+        c.offset += 1
 
 # /nothink = 26865
 def fill_cache(tokens, model, prompt_cache, temp=0.6, top_p=0.95, top_k=20):

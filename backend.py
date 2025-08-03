@@ -6,7 +6,7 @@ from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
 from customutils import load
 from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
-from commonutils import cache_generate, fill_cache, flush_generator, generate, pop_kvcache, skip_reason
+from commonutils import cache_generate, fill_cache, flush_generator, generate, insert_kvcache, pop_kvcache, skip_reason
 from mlx_lm.models.cache import make_prompt_cache
 
 import os
@@ -64,7 +64,9 @@ messages.append({"role": "system", "content": system_prompt + "/nothink"})
 prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
 tokens = tokenizer.encode(prompt)
 fill_cache(tokens, model, cache)
-pop_kvcache(cache, [(tokens.index(26865),tokens.index(26865))])
+think = True
+nothink_pos = tokens.index(26865)
+nothink = pop_kvcache(cache, nothink_pos)
 status.append(True)
 
 @app.route('/')
@@ -277,8 +279,14 @@ while True:
     msg = message_queue.get()
     if not require_thinking(msg["content"]):
         messages[0] = {"role": "system", "content": system_prompt + "/nothink"}
+        if think:
+            insert_kvcache(cache, nothink_pos, nothink)
+        think = False
     else:
         messages[0] = {"role": "system", "content": system_prompt}
+        if not think:
+            nothink = pop_kvcache(cache, nothink_pos)
+        think = True
     messages.append({"role": msg["role"], "content": msg["content"]})
     status.append(True)
     responding = True
