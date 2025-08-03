@@ -55,7 +55,7 @@ def pop_kvcache(cache, index: int): # Cache shape (1,8,x,128)
             seg.append(s[:,:,:index,:])
             seg.append(s[:,:,index + 1:,:])
             return mx.concat(seg, axis=2)
-        state.append((k[:,:,:index,:], v[:,:,:index,:]))
+        state.append((k[:,:,index:index+1,:], v[:,:,index:index+1,:]))
         c.state = (pop(k), pop(v))
         c.keys, c.values = c.state
         c.offset -= 1
