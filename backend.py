@@ -6,7 +6,7 @@ from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
 from customutils import load
 from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
-from commonutils import cache_generate, flush_generator, generate, skip_reason
+from commonutils import cache_generate, fill_cache, flush_generator, generate, pop_kvcache, skip_reason
 from mlx_lm.models.cache import make_prompt_cache
 
 import os
@@ -60,7 +60,11 @@ if not supports_system_role:
     print("Error: The model does not support system role.")
     exit(1)
 system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself."
-messages.append({"role": "system", "content": system_prompt})
+messages.append({"role": "system", "content": system_prompt + "/nothink"})
+prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+tokens = tokenizer.encode(prompt)
+fill_cache(tokens, model, cache)
+pop_kvcache(cache, [(tokens.index(26865),tokens.index(26865))])
 status.append(True)
 
 @app.route('/')
@@ -89,9 +93,11 @@ def append_memory(messages, status):
 
 @app.route('/forget')
 def forget():
-    global messages, status, responding, response_buffer, ptr
+    global messages, status, responding, response_buffer, ptr, cache, tokenizer, model, chat_template
     append_memory(messages, status)
+    cache = make_prompt_cache(model)
     messages = [{"role": "system", "content": system_prompt}]
+    fill_cache(tokenizer, tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template), model, cache)
     status = [True]
     ptr = 0
     responding = False
@@ -108,20 +114,6 @@ def retry():
             return {"status": "error", "message": "No messages to retry."}
         messages.pop()
         status.pop()
-        last_message = messages[-1]
-        messages.pop()
-        status.pop()
-        message_queue.put({"role": last_message["role"], "content": last_message["content"], "temp": temp, "top_p": top_p})
-        headers = {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-        }
-        while not responding: # Wait for the responding signal
-            time.sleep(0.1)
-        return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
-    else:
-        responding = False
         last_message = messages[-1]
         messages.pop()
         status.pop()
@@ -263,28 +255,28 @@ print("Server started on port 8501")
 while True:
     if message_queue.empty():
         responding = False
-        if not compressing and len(messages) > 9:
-            compressing = True
-            append_memory(messages, status)
-            compress_gen = compress_context(messages.copy())
-            compress_result = ""
-            ptr = len(messages)
-        if compressing:
-            chunk = next(compress_gen, None)
-            while chunk is not None:
-                compress_result += chunk
-                compress_result = compress_result.replace('�', '')
-                if responding:
-                    break
-                chunk = next(compress_gen, None)
-            if not responding:
-                compressing = False
-                messages = [messages[0], {"role" : "system", "content" : "Chat History\n\n" + compress_result}, *messages[ptr:]]
-                status = [True, True, *status[ptr:]]
+        # if not compressing and len(messages) > 9:
+        #     compressing = True
+        #     append_memory(messages, status)
+        #     compress_gen = compress_context(messages.copy())
+        #     compress_result = ""
+        #     ptr = len(messages)
+        # if compressing:
+        #     chunk = next(compress_gen, None)
+        #     while chunk is not None:
+        #         compress_result += chunk
+        #         compress_result = compress_result.replace('�', '')
+        #         if responding:
+        #             break
+        #         chunk = next(compress_gen, None)
+        #     if not responding:
+        #         compressing = False
+        #         messages = [messages[0], *messages[ptr:]]
+        #         status = [True, True, *status[ptr:]]
                 # print("Compressing finished, result:", compress_result)
     msg = message_queue.get()
     if not require_thinking(msg["content"]):
-        messages[0] = {"role": "system", "content": system_prompt + " /nothink"}
+        messages[0] = {"role": "system", "content": system_prompt + "/nothink"}
     else:
         messages[0] = {"role": "system", "content": system_prompt}
     messages.append({"role": msg["role"], "content": msg["content"]})

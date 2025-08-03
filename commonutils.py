@@ -1,6 +1,7 @@
 import mlx.core as mx
 from customutils import generate_step, incremental_generate_step
 from mlx_lm.sample_utils import make_sampler, make_repetition_penalty
+import numpy as np
 
 def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, top_k=20, context_length=16384, stop_words=[], prompt_cache=None):
     text = ""
@@ -15,10 +16,8 @@ def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, top_k=20, context_l
         text += delta
         yield delta
 
-token_offset = 0
-
 def cache_generate(tokenizer, prompt, model, prompt_cache, temp=0.6, top_p=0.95, top_k=20, context_length=16384, stop_words=[]):
-    global token_offset
+    token_offset = prompt_cache[0].offset
     text = ""
     tokens = tokenizer.encode(prompt)
     for (token, prob), n in zip(incremental_generate_step(mx.array(tokens[token_offset:], dtype=mx.int32), model, prompt_cache, mx.array(tokens[:token_offset], dtype=mx.int32), max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=top_k), logits_processors=[make_repetition_penalty(1.1, 60)]),
@@ -30,7 +29,28 @@ def cache_generate(tokenizer, prompt, model, prompt_cache, temp=0.6, top_p=0.95,
         delta = tokenizer.decode(token)
         text += delta
         yield delta
-    token_offset = len(tokens)
+
+def pop_kvcache(cache, ranges: list[tuple]): # Cache shape (1,8,x,128)
+    length = sum(end - start + 1 for start, end in ranges)
+    for c in cache:
+        k, v = c.state
+        def pop(s):
+            ptr = 0
+            seg = []
+            for start, end in ranges:
+                seg.append(s[:,:,ptr:start,:])
+                ptr = end + 1
+            seg.append(s[:,:,ptr:,:])
+            return mx.concat(seg, axis=2)
+        c.state = (pop(k), pop(v))
+        c.keys, c.values = c.state
+        c.offset -= length
+
+# /nothink = 26865
+def fill_cache(tokens, model, prompt_cache, temp=0.6, top_p=0.95, top_k=20):
+    token_offset = prompt_cache[0].offset
+    next(incremental_generate_step(mx.array(tokens[token_offset:], dtype=mx.int32), model, prompt_cache, mx.array(tokens[:token_offset], dtype=mx.int32), max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=top_k), logits_processors=[make_repetition_penalty(1.1, 60)]))
+    return tokens
     
 def flush_generator(generator, max_step=-1):
     response = ""

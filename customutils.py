@@ -272,7 +272,11 @@ def incremental_generate_step(
             logprobs = logits - mx.logsumexp(logits, keepdims=True)
             y = sampler(logprobs)
             return y, logprobs.squeeze(0)
-
+    if len(y) == 0:
+        y = mx.array([tokens[-1]], dtype=mx.int32)
+        history_prompt = history_prompt[:-1]
+        for c in prompt_cache:
+            c.offset -= 1
     with mx.stream(generation_stream):
         y, logprobs = _step(y, prompt_cache)
 
