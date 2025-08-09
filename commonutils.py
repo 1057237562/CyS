@@ -18,8 +18,8 @@ def generate(tokenizer, prompt, model, temp=0.6, top_p=0.95, top_k=20, context_l
 
 def cache_generate(tokenizer, prompt, model, prompt_cache, temp=0.6, top_p=0.95, top_k=20, context_length=16384, stop_words=[]):
     token_offset = prompt_cache[0].offset
-    text = ""
     tokens = tokenizer.encode(prompt)
+    text = ""
     for (token, prob), n in zip(incremental_generate_step(mx.array(tokens[token_offset:], dtype=mx.int32), model, prompt_cache, mx.array(tokens[:token_offset], dtype=mx.int32), max_tokens=-1, sampler=make_sampler(temp, top_p, top_k=top_k), logits_processors=[make_repetition_penalty(1.1, 60)]),
                                 range(context_length)):
 
@@ -29,8 +29,10 @@ def cache_generate(tokenizer, prompt, model, prompt_cache, temp=0.6, top_p=0.95,
         delta = tokenizer.decode(token)
         text += delta
         yield delta
+    if prompt_cache[0].offset != len(tokens):
+        print("More KVCache generated")
 
-def pop_kvcache(cache, ranges: list[tuple]): # Cache shape (1,8,x,128)
+def erase_kvcache(cache, ranges: list[tuple]): # Cache shape (1,8,x,128)
     length = sum(end - start + 1 for start, end in ranges)
     for c in cache:
         k, v = c.state
@@ -44,7 +46,7 @@ def pop_kvcache(cache, ranges: list[tuple]): # Cache shape (1,8,x,128)
             return mx.concat(seg, axis=2)
         c.state = (pop(k), pop(v))
         c.keys, c.values = c.state
-        c.offset -= length
+        c.offset = c.keys.shape[2]
         
 def pop_kvcache(cache, index: int): # Cache shape (1,8,x,128)
     state = []
@@ -58,15 +60,15 @@ def pop_kvcache(cache, index: int): # Cache shape (1,8,x,128)
         state.append((k[:,:,index:index+1,:], v[:,:,index:index+1,:]))
         c.state = (pop(k), pop(v))
         c.keys, c.values = c.state
-        c.offset -= 1
+        c.offset = c.keys.shape[2]
     return state
         
 def insert_kvcache(cache, index: int, state: list[tuple]):
     for c, (k, v) in zip(cache, state):
         key, value = c.state
-        c.state = (mx.concat([key[:,:,:index,:], k, key[:,:,index:,:]], axis=2), mx.concat([value[:,:,:index,:], v, value[:,:,:index,:]], axis=2))
+        c.state = (mx.concat([key[:,:,:index,:], k, key[:,:,index:,:]], axis=2), mx.concat([value[:,:,:index,:], v, value[:,:,index:,:]], axis=2))
         c.keys, c.values = c.state
-        c.offset += 1
+        c.offset = c.keys.shape[2]
 
 # /nothink = 26865
 def fill_cache(tokens, model, prompt_cache, temp=0.6, top_p=0.95, top_k=20):

@@ -6,7 +6,7 @@ from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
 from customutils import load
 from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
-from commonutils import cache_generate, fill_cache, flush_generator, generate, insert_kvcache, pop_kvcache, skip_reason
+from commonutils import cache_generate, erase_kvcache, fill_cache, flush_generator, generate, insert_kvcache, pop_kvcache, skip_reason
 from mlx_lm.models.cache import make_prompt_cache
 
 import os
@@ -59,15 +59,29 @@ supports_system_role = "system role not supported" not in chat_template.lower()
 if not supports_system_role:
     print("Error: The model does not support system role.")
     exit(1)
-system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself."
+system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself.\n"
 messages.append({"role": "system", "content": system_prompt + "/nothink"})
-prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
+prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=False, chat_template=chat_template)
 tokens = tokenizer.encode(prompt)
 fill_cache(tokens, model, cache)
 think = True
-nothink_pos = tokens.index(26865)
-nothink = pop_kvcache(cache, nothink_pos)
+nothink_pos = tokens.index(26865) - 1
+nothink = [pop_kvcache(cache, nothink_pos), pop_kvcache(cache, nothink_pos)]
+messages[0] = {"role": "system", "content": system_prompt}
 status.append(True)
+
+def switch_thinking(thinking):
+    global think, nothink, nothink_pos, cache, messages, system_prompt
+    if thinking:
+        if not think:
+            messages[0] = {"role": "system", "content": system_prompt}
+            nothink = [pop_kvcache(cache, nothink_pos), pop_kvcache(cache, nothink_pos)]
+    else:
+        if think:
+            messages[0] = {"role": "system", "content": system_prompt + "/nothink"}
+            insert_kvcache(cache, nothink_pos, nothink[1])
+            insert_kvcache(cache, nothink_pos, nothink[0])
+    think = thinking
 
 @app.route('/')
 def index():
@@ -87,19 +101,18 @@ def fetch_stream():
     }
     return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
 
-def append_memory(messages, status):
-    system_prompt = "You will use tools provided multiple times wisely instead calculate by yourself. /nothink"
-    messages[0] = {"role": "system", "content": system_prompt}
+def append_memory(messages, status, think):
+    system_prompt = "You will use tools provided multiple times wisely instead calculate by yourself."
+    messages[0] = {"role": "system", "content": system_prompt + ("" if think else "/nothink")}
     with open(memory_file, "a", encoding='utf-8') as f:
-        f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if suc], "tools" : fetch_tools()}, ensure_ascii=False) + "\n")
+        f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if suc], "tools": fetch_tools()}, ensure_ascii=False) + "\n")
 
 @app.route('/forget')
 def forget():
-    global messages, status, responding, response_buffer, ptr, cache, tokenizer, model, chat_template
+    global messages, status, responding, response_buffer, ptr, cache, tokens, think
     append_memory(messages, status)
-    cache = make_prompt_cache(model)
-    messages = [{"role": "system", "content": system_prompt}]
-    fill_cache(tokenizer, tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template), model, cache)
+    start_pos = len(tokens)
+    erase_kvcache(cache, ranges=[(start_pos + (0 if think else 1), cache[0].offset - 1)])
     status = [True]
     ptr = 0
     responding = False
@@ -128,7 +141,7 @@ def retry():
         while not responding: # Wait for the responding signal
             time.sleep(0.1)
         return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
-        
+    return Response(fetch_messages(), headers=headers, mimetype='text/event-stream')
         
 
 @app.route("/halt")
@@ -204,18 +217,18 @@ def send_message(messages, temp, top_p):
         response_buffer = ""
         if "<tool_call>" in answer and "</tool_call>" in answer:
             tool_call = answer.split('<tool_call>')[1].split('</tool_call>')[0]
-            sucess, callback = function_call(tool_call)
-            if not sucess:
-                messages[0] = {"role": "system", "content": system_prompt}
-                status[-1] = False
+            success, callback = function_call(tool_call)
             messages.append({"role": "tool", "content": callback})
-            status.append(sucess)
+            status.append(success)
             prompt = tokenizer.apply_chat_template(messages,
                                                         tools=fetch_tools(),
                                                         tokenize=False,
                                                         add_generation_prompt=True,
                                                         chat_template=chat_template)
             prompt = prompt.rstrip("\n")
+            if not success:
+                switch_thinking(True)
+                status[-1] = False
             flag = True
     
 
@@ -227,7 +240,7 @@ def require_thinking(msg):
     if "/think" in msg:
         return True
     global tokenizer, model, chat_template
-    system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You should return True if it's difficult or False if it's simple based on the user's request. You must only return one of True/False. /nothink"
+    system_prompt = "You are a classifier agent designed to determine whether user request's complexity deserves deep thinking. You should return True if it's difficult or False if it's simple based on the user's request. You must only return one of True/False.\n/nothink"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     remove_lora_layers(model)
@@ -246,7 +259,7 @@ memory_file = "./memory.jsonl"
 
 def compress_context(messages):
     global tokenizer, model, chat_template
-    system_prompt = "You are a secretary agent designed to conclude chat history between user and other agent. You will wisely rank the importance of each information and keep more important information if there is a lot of key informations. /nothink"
+    system_prompt = "You are a secretary agent designed to conclude chat history between user and other agent. You will wisely rank the importance of each information and keep more important information if there is a lot of key informations.\n/nothink"
     messages = [{"role": "system", "content": system_prompt}, *messages[1:], {"role": "user", "content": "Conclude the chat history in a concise way. The conclusion should be less than 2000 words and must not exceed 10 key information."}]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chat_template)
     return generate(tokenizer, prompt, model, 0.2, 0.3)
@@ -277,16 +290,7 @@ while True:
         #         status = [True, True, *status[ptr:]]
                 # print("Compressing finished, result:", compress_result)
     msg = message_queue.get()
-    if not require_thinking(msg["content"]):
-        messages[0] = {"role": "system", "content": system_prompt + "/nothink"}
-        if think:
-            insert_kvcache(cache, nothink_pos, nothink)
-        think = False
-    else:
-        messages[0] = {"role": "system", "content": system_prompt}
-        if not think:
-            nothink = pop_kvcache(cache, nothink_pos)
-        think = True
+    switch_thinking(require_thinking(msg["content"]))
     messages.append({"role": msg["role"], "content": msg["content"]})
     status.append(True)
     responding = True

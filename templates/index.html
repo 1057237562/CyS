@@ -782,6 +782,7 @@
         });
         
         document.getElementById('sendButton').addEventListener('click', async function() {
+            document.getElementById('message').value = '';
             const message = document.getElementById('message').value.trim();
             const temperature = parseFloat(document.getElementById('temperature').value);
             const top_p = parseFloat(document.getElementById('top_p').value);
@@ -874,9 +875,6 @@
                 responseDiv.appendChild(errorDiv);
                 console.error('Error:', error);
             } finally {
-                // 发送后清空输入框
-                document.getElementById('message').value = '';
-                // 重新聚焦到输入框
                 document.getElementById('message').focus();
             }
         });

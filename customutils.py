@@ -236,7 +236,6 @@ def incremental_generate_step(
     Yields:
         Tuple[mx.array, mx.array]: One token and a vector of log probabilities.
     """
-
     y = prompt
     tokens = history_prompt
 

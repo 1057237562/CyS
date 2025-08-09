@@ -33,11 +33,16 @@ tools = [{
     {
         "type": "function",
         "function": {
-            "name": "pip_list",
-            "description": "List all library that is installed in current python environment. You can check the installed libraries if u are not sure.",
+            "name": "check_pip_lib",
+            "description": "Returns whether a library is installed in current python environment. You can check the installed libraries if u are not sure.",
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the python library to check."
+                    }
+                },
                 "required": []
             }
         }
@@ -60,14 +65,22 @@ def execute_function():
                     process.stdin.close()
                     output = stdout.decode().strip()
                     error = stderr.decode().strip() if stderr is not None else ""
-                    res = error + "\n" + output
-                    return {"data": res if output != "" else "Code didn't write any data to stdout.\nTool call Error:" + error, "status": not error}
+                    status = True
+                    if error:
+                        status = False
+                        error = "Tool call Error:" + error
+                    if not output:
+                        status = False
+                        output = "Error: Code didn't write any data to stdout."
+                    res = "\n" + error + "\n" + output
+                    return {"data": res, "status": status}
                 except subprocess.TimeoutExpired:
                     process.kill()
                     return {"data": "Code execution timed out.", "status": False}
-        if fc["name"] == "pip_list":
-            with os.popen("pip list") as p:
-                return {"data": p.read(), "status": True}
+        if fc["name"] == "check_pip_lib":
+            lib_name = fc["arguments"].get("name", "")
+            with os.popen(f"pip list") as p:
+                return {"data": lib_name in p.read(), "status": True}
     except Exception:
         print(request.data)
         return {"data": traceback.format_exc(), "status": False}

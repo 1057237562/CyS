@@ -6,10 +6,10 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: Current File",
+            "name": "Run CyberStew",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "backend.py",
             "console": "integratedTerminal",
             "justMyCode": false
         }
