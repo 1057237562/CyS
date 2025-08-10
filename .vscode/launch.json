@@ -12,6 +12,14 @@
             "program": "backend.py",
             "console": "integratedTerminal",
             "justMyCode": false
+        },
+        {
+            "name": "Debug Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }

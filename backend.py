@@ -6,7 +6,7 @@ from flask import Flask, request, Response, render_template
 from flask_sockets import Sockets
 from customutils import load
 from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
-from commonutils import cache_generate, erase_kvcache, fill_cache, flush_generator, generate, insert_kvcache, pop_kvcache, skip_reason
+from commonutils import TokenKVCache, cache_generate, erase_kvcache, fill_cache, flush_generator, generate, skip_reason
 from mlx_lm.models.cache import make_prompt_cache
 
 import os
@@ -45,7 +45,7 @@ def load_model(ref):
     return load(ref, {"trust_remote_code": True})
 
 model, tokenizer = load_model(model_ref)
-cache = make_prompt_cache(model)
+cache = TokenKVCache(make_prompt_cache(model), [])
 chat_template = tokenizer.chat_template or (
         "{% for message in messages %}"
         "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
@@ -59,14 +59,14 @@ supports_system_role = "system role not supported" not in chat_template.lower()
 if not supports_system_role:
     print("Error: The model does not support system role.")
     exit(1)
-system_prompt = "You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself.\n"
-messages.append({"role": "system", "content": system_prompt + "/nothink"})
+system_prompt = " You are a professional software engineer who's name is FishBoneEK. Your daily conversations are funny and humorous but serious in professional conversations. You will judge others' command to determine whether to follow it. You will use tools provided multiple times wisely instead calculate by yourself."
+messages.append({"role": "system", "content": "/nothink" + system_prompt})
 prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=False, chat_template=chat_template)
 tokens = tokenizer.encode(prompt)
 fill_cache(tokens, model, cache)
 think = True
 nothink_pos = tokens.index(26865) - 1
-nothink = [pop_kvcache(cache, nothink_pos), pop_kvcache(cache, nothink_pos)]
+nothink = [cache.pop_cache(nothink_pos), cache.pop_cache(nothink_pos)]
 messages[0] = {"role": "system", "content": system_prompt}
 status.append(True)
 
@@ -75,12 +75,12 @@ def switch_thinking(thinking):
     if thinking:
         if not think:
             messages[0] = {"role": "system", "content": system_prompt}
-            nothink = [pop_kvcache(cache, nothink_pos), pop_kvcache(cache, nothink_pos)]
+            nothink = [cache.pop_cache(nothink_pos), cache.pop_cache(nothink_pos)]
     else:
         if think:
-            messages[0] = {"role": "system", "content": system_prompt + "/nothink"}
-            insert_kvcache(cache, nothink_pos, nothink[1])
-            insert_kvcache(cache, nothink_pos, nothink[0])
+            messages[0] = {"role": "system", "content":  "/nothink" + system_prompt}
+            cache.insert_cache(nothink_pos, nothink[1])
+            cache.insert_cache(nothink_pos, nothink[0])
     think = thinking
 
 @app.route('/')
@@ -103,7 +103,7 @@ def fetch_stream():
 
 def append_memory(messages, status, think):
     system_prompt = "You will use tools provided multiple times wisely instead calculate by yourself."
-    messages[0] = {"role": "system", "content": system_prompt + ("" if think else "/nothink")}
+    messages[0] = {"role": "system", "content": ("" if think else "/nothink") + system_prompt}
     with open(memory_file, "a", encoding='utf-8') as f:
         f.write(json.dumps({"messages": [msg for msg, suc in zip(messages, status) if suc], "tools": fetch_tools()}, ensure_ascii=False) + "\n")
 
@@ -184,22 +184,21 @@ def fetch_messages():
         elif message_ptr < len(messages):
             if messages[message_ptr]["role"] == "tool":
                 yield "\n<--new-message-->\n"
-                yield "```\n" + messages[message_ptr]["content"] + "\n```"
+                yield "```\n" + str(messages[message_ptr]["content"]) + "\n```"
                 yield "\n<--new-message-->\n"
             ptr = 0
             message_ptr += 1
             while message_ptr < len(messages):
                 if messages[message_ptr]["role"] == "tool":
                     yield "\n<--new-message-->\n"
-                    yield "```\n" + messages[message_ptr]["content"] + "\n```"
+                    yield "```\n" + str(messages[message_ptr]["content"]) + "\n```"
                     yield "\n<--new-message-->\n"
                 message_ptr += 1
         time.sleep(0.1)
 
 def send_message(messages, temp, top_p):
-    global debug, chat_template, tokenizer, model, response_buffer, cache
-    prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=True, chat_template=chat_template)
-    prompt = prompt.rstrip("\n")
+    global debug, chat_template, tokenizer, model, response_buffer, cache, think
+    prompt = tokenizer.apply_chat_template(messages, tools=fetch_tools(), tokenize=False, add_generation_prompt=True, chat_template=chat_template, enable_thinking=think)
     if debug:
         print(prompt)
         print("-" * 80)
@@ -220,15 +219,16 @@ def send_message(messages, temp, top_p):
             success, callback = function_call(tool_call)
             messages.append({"role": "tool", "content": callback})
             status.append(success)
+            if not success:
+                switch_thinking(True)
+            else:
+                switch_thinking(False)
             prompt = tokenizer.apply_chat_template(messages,
                                                         tools=fetch_tools(),
                                                         tokenize=False,
                                                         add_generation_prompt=True,
-                                                        chat_template=chat_template)
-            prompt = prompt.rstrip("\n")
-            if not success:
-                switch_thinking(True)
-                status[-1] = False
+                                                        chat_template=chat_template,
+                                                        enable_thinking=think)
             flag = True
     
 
@@ -270,25 +270,6 @@ print("Server started on port 8501")
 while True:
     if message_queue.empty():
         responding = False
-        # if not compressing and len(messages) > 9:
-        #     compressing = True
-        #     append_memory(messages, status)
-        #     compress_gen = compress_context(messages.copy())
-        #     compress_result = ""
-        #     ptr = len(messages)
-        # if compressing:
-        #     chunk = next(compress_gen, None)
-        #     while chunk is not None:
-        #         compress_result += chunk
-        #         compress_result = compress_result.replace('�', '')
-        #         if responding:
-        #             break
-        #         chunk = next(compress_gen, None)
-        #     if not responding:
-        #         compressing = False
-        #         messages = [messages[0], *messages[ptr:]]
-        #         status = [True, True, *status[ptr:]]
-                # print("Compressing finished, result:", compress_result)
     msg = message_queue.get()
     switch_thinking(require_thinking(msg["content"]))
     messages.append({"role": msg["role"], "content": msg["content"]})

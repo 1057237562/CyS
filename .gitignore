@@ -4,3 +4,5 @@ bpid.txt
 ipid.txt
 snippet.py
 memory.jsonl
+token_reader.py
+tokens.stream

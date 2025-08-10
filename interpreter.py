@@ -46,6 +46,23 @@ tools = [{
                 "required": []
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pip_install",
+            "description": "Install a new python library to current python environment. You should check the installed libraries first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the python library to install."
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -81,6 +98,10 @@ def execute_function():
             lib_name = fc["arguments"].get("name", "")
             with os.popen(f"pip list") as p:
                 return {"data": lib_name in p.read(), "status": True}
+        if fc["name"] == "pip_install":
+            lib_name = fc["arguments"].get("name", "")
+            with os.popen(f"pip install " + lib_name) as p:
+                return {"data": p.read(), "status": True}
     except Exception:
         print(request.data)
         return {"data": traceback.format_exc(), "status": False}

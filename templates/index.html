@@ -782,8 +782,8 @@
         });
         
         document.getElementById('sendButton').addEventListener('click', async function() {
+            const message = document.getElementById('message').value.trim() + '';
             document.getElementById('message').value = '';
-            const message = document.getElementById('message').value.trim();
             const temperature = parseFloat(document.getElementById('temperature').value);
             const top_p = parseFloat(document.getElementById('top_p').value);
             
